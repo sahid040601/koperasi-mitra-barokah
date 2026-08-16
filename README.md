@@ -1,36 +1,61 @@
 # Koperasi Mitra Barokah
 
-WebApp Koperasi Mitra Barokah — Dashboard, Anggota, Simpanan, Pinjaman, Kasir/POS, Laporan, Pengguna, dan autentikasi JWT.
+WebApp koperasi + POS/Kasir berbasis Node.js, Express, SQLite, dan UI responsif.
 
-## Versi yang di-deploy
-Repository ini sekarang berisi bundle aplikasi **UI/UX + Kasir/POS + hardening keamanan** terbaru yang kita siapkan. Sumber aplikasi disimpan sebagai `app-release.tar.gz` dan diekstrak otomatis saat deployment Render.
+## Struktur
 
-## Deploy gratis ke Render
-1. Hubungkan repository ini ke Render.
-2. Pilih **New Web Service** dan repository `sahid040601/koperasi-mitra-barokah`.
-3. Render akan membaca `render.yaml`.
-4. Isi environment variable `JWT_SECRET` dengan random secret minimal 32 byte.
-5. Setelah deploy selesai, buka URL `https://koperasi-mitra-barokah.onrender.com` (atau URL Render yang diberikan).
+```text
+koperasi-mitra-barokah/
+├── package.json
+├── server.js
+├── public/
+│   ├── index.html
+│   └── app.js
+├── render.yaml
+├── .env.example
+└── data/
+```
 
-## Akun demo
-- admin / admin123
-- manajer / manajer123
-- pengawas / pengawas123
-- KMB-0001 / nasabah123
+## Jalankan lokal
 
-**Ganti semua password demo sebelum dipakai untuk data sungguhan.**
+```bash
+npm install
+cp .env.example .env
+# isi JWT_SECRET dan password awal
+npm start
+```
 
-## Catatan keamanan
-- Jangan commit `.env` atau secret asli.
-- Backend wajib memakai HTTPS saat diakses publik.
-- SQLite pada filesystem ephemeral cocok untuk demo/testing; untuk produksi dengan data penting, pindahkan database ke layanan PostgreSQL/MySQL yang persisten.
+Buka `http://localhost:3000`.
 
-## Fitur UI
-- Dashboard KPI koperasi
-- Anggota dan pendaftaran baru
-- Simpanan
-- Pinjaman dan angsuran
-- Kasir/POS modern dengan katalog, keranjang, qty, diskon, metode pembayaran dan total
-- Laporan
-- Manajemen pengguna berbasis role
-- Logo resmi Koperasi Mitra Barokah
+## Deploy gratis di Render
+
+Repository sudah memakai source Node.js langsung sehingga Render tidak perlu mengekstrak bundle.
+
+- Runtime: **Node**
+- Branch: **main**
+- Build Command: `npm install`
+- Start Command: `npm start`
+- Health Check: `/api/health`
+- Plan: **Free**
+
+Environment secret yang wajib diisi di Render:
+
+- `JWT_SECRET` — minimal 32 karakter acak
+- `INITIAL_ADMIN_PASSWORD`
+- `INITIAL_MANAJER_PASSWORD`
+- `INITIAL_PENGAWAS_PASSWORD`
+- `INITIAL_NASABAH_PASSWORD`
+
+`NODE_ENV` dan `CORS_ORIGIN` sudah disiapkan oleh `render.yaml`.
+
+## Catatan database
+
+Versi ini memakai SQLite pada folder `data/`. Filesystem Render Free bersifat ephemeral, sehingga cocok untuk demo/testing tetapi **tidak untuk data koperasi produksi** tanpa penyimpanan/database persisten.
+
+## Keamanan
+
+- JWT secret tidak memiliki fallback yang lemah.
+- CORS dibatasi lewat `CORS_ORIGIN`.
+- Rate limit login dan pendaftaran publik aktif.
+- Password awal tidak ditanam di source code.
+- Header keamanan dasar dan batas body request aktif.
