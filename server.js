@@ -1,0 +1,78 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = Number(process.env.PORT || 3000);
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) throw new Error('JWT_SECRET wajib diisi dan minimal 32 karakter.');
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');next();});
+app.use(cors({origin:process.env.CORS_ORIGIN?process.env.CORS_ORIGIN.split(',').map(x=>x.trim()).filter(Boolean):false,credentials:true}));
+app.use(express.json({limit:'1mb'}));
+
+const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname,'data'));
+fs.mkdirSync(dataDir,{recursive:true});
+const db = new Database(path.join(dataDir,'koperasi.db'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+db.exec(`
+CREATE TABLE IF NOT EXISTS anggota(id INTEGER PRIMARY KEY AUTOINCREMENT,no_anggota TEXT UNIQUE,nama TEXT NOT NULL,nik TEXT,alamat TEXT,no_hp TEXT,email TEXT,pekerjaan TEXT,tanggal_gabung TEXT,status TEXT NOT NULL DEFAULT 'pending',catatan TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,nama TEXT NOT NULL,role TEXT NOT NULL,anggota_id INTEGER,aktif INTEGER NOT NULL DEFAULT 1,created_at TEXT DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(anggota_id) REFERENCES anggota(id));
+CREATE TABLE IF NOT EXISTS simpanan(id INTEGER PRIMARY KEY AUTOINCREMENT,anggota_id INTEGER NOT NULL,jenis TEXT NOT NULL,jumlah REAL NOT NULL,tanggal TEXT NOT NULL,keterangan TEXT,created_by TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(anggota_id) REFERENCES anggota(id));
+CREATE TABLE IF NOT EXISTS pinjaman(id INTEGER PRIMARY KEY AUTOINCREMENT,anggota_id INTEGER NOT NULL,jumlah REAL NOT NULL,tenor_bulan INTEGER NOT NULL,bunga_persen REAL NOT NULL DEFAULT 1.5,tujuan TEXT,status TEXT NOT NULL DEFAULT 'pengajuan',tanggal_pengajuan TEXT DEFAULT CURRENT_TIMESTAMP,tanggal_keputusan TEXT,catatan TEXT,diputuskan_oleh TEXT,FOREIGN KEY(anggota_id) REFERENCES anggota(id));
+CREATE TABLE IF NOT EXISTS transaksi(id INTEGER PRIMARY KEY AUTOINCREMENT,anggota_id INTEGER,jenis TEXT NOT NULL,jumlah REAL NOT NULL,tanggal TEXT DEFAULT CURRENT_TIMESTAMP,keterangan TEXT,created_by TEXT,FOREIGN KEY(anggota_id) REFERENCES anggota(id));
+`);
+
+function seed(){
+  if(db.prepare('SELECT COUNT(*) c FROM users').get().c) return;
+  const p={admin:process.env.INITIAL_ADMIN_PASSWORD||crypto.randomBytes(18).toString('base64url'),manajer:process.env.INITIAL_MANAJER_PASSWORD||crypto.randomBytes(18).toString('base64url'),pengawas:process.env.INITIAL_PENGAWAS_PASSWORD||crypto.randomBytes(18).toString('base64url'),nasabah:process.env.INITIAL_NASABAH_PASSWORD||crypto.randomBytes(18).toString('base64url')};
+  const insUser=db.prepare('INSERT INTO users(username,password_hash,nama,role,anggota_id) VALUES(?,?,?,?,?)');
+  insUser.run('admin',bcrypt.hashSync(p.admin,12),'Administrator','admin',null);
+  insUser.run('manajer',bcrypt.hashSync(p.manajer,12),'Manajer Koperasi','manajer',null);
+  insUser.run('pengawas',bcrypt.hashSync(p.pengawas,12),'Pengawas Koperasi','pengawas',null);
+  const a=db.prepare("INSERT INTO anggota(no_anggota,nama,nik,alamat,no_hp,status,tanggal_gabung) VALUES(?,?,?,?,?,'aktif',date('now'))").run('KMB-0001','Budi Santoso','3201010101010001','Tangerang','081234567890');
+  insUser.run('KMB-0001',bcrypt.hashSync(p.nasabah,12),'Budi Santoso','nasabah',a.lastInsertRowid);
+  const s=db.prepare('INSERT INTO simpanan(anggota_id,jenis,jumlah,tanggal,keterangan,created_by) VALUES(?,?,?,?,?,?)');
+  s.run(a.lastInsertRowid,'pokok',100000,'2024-01-15','Simpanan pokok awal','system');
+  s.run(a.lastInsertRowid,'wajib',50000,'2024-02-01','Simpanan wajib Februari','system');
+  console.log('Database awal dibuat. Password awal diambil dari environment variables Render.');
+}
+seed();
+
+const attempts=new Map();
+function limited(key,max,windowMs){const now=Date.now(),x=attempts.get(key);if(!x||x.reset<now){attempts.set(key,{count:1,reset:now+windowMs});return false}x.count++;return x.count>max;}
+function auth(req,res,next){const h=req.get('authorization')||'';const t=h.startsWith('Bearer ')?h.slice(7):null;if(!t)return res.status(401).json({error:'Belum login'});try{req.user=jwt.verify(t,JWT_SECRET);next()}catch{return res.status(401).json({error:'Sesi tidak valid'})}}
+function allow(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({error:'Akses ditolak'})}
+function asNum(v){const n=Number(v);return Number.isFinite(n)&&n>=0?n:null}
+
+app.get('/api/health',(req,res)=>res.json({ok:true,service:'koperasi-mitra-barokah',timestamp:new Date().toISOString()}));
+app.post('/api/auth/login',(req,res)=>{if(limited('login:'+req.ip,Number(process.env.LOGIN_RATE_LIMIT_MAX||10),15*60*1000))return res.status(429).json({error:'Terlalu banyak percobaan login'});const {username,password}=req.body||{};if(!username||!password)return res.status(400).json({error:'Username dan password wajib diisi'});const u=db.prepare('SELECT * FROM users WHERE username=? AND aktif=1').get(String(username).trim());if(!u||!bcrypt.compareSync(password,u.password_hash))return res.status(401).json({error:'Username atau password salah'});const user={id:u.id,username:u.username,nama:u.nama,role:u.role,anggota_id:u.anggota_id};res.json({token:jwt.sign(user,JWT_SECRET,{expiresIn:'12h'}),user})});
+app.get('/api/auth/me',auth,(req,res)=>res.json({user:req.user}));
+app.post('/api/auth/register-public',(req,res)=>{if(limited('reg:'+req.ip,5,15*60*1000))return res.status(429).json({error:'Terlalu banyak pendaftaran'});const {nama,nik,alamat,no_hp,email,pekerjaan}=req.body||{};if(!nama||!nik||!alamat||!no_hp)return res.status(400).json({error:'Nama, NIK, alamat, dan no. HP wajib diisi'});if(db.prepare('SELECT id FROM anggota WHERE nik=?').get(String(nik).trim()))return res.status(400).json({error:'NIK sudah terdaftar'});const x=db.prepare("INSERT INTO anggota(nama,nik,alamat,no_hp,email,pekerjaan,tanggal_gabung,status) VALUES(?,?,?,?,?,?,date('now'),'pending')").run(nama.trim(),nik.trim(),alamat.trim(),no_hp.trim(),email||null,pekerjaan||null);res.status(201).json({id:x.lastInsertRowid,message:'Pendaftaran berhasil dikirim'})});
+
+app.get('/api/anggota',auth,(req,res)=>res.json(db.prepare('SELECT * FROM anggota ORDER BY id DESC').all()));
+app.post('/api/anggota',auth,allow('admin','manajer'),(req,res)=>{const {nama,nik,alamat,no_hp,email,pekerjaan}=req.body||{};if(!nama||!no_hp)return res.status(400).json({error:'Nama dan no. HP wajib'});const last=db.prepare("SELECT no_anggota FROM anggota WHERE no_anggota IS NOT NULL ORDER BY id DESC LIMIT 1").get();const num=last?.no_anggota?Number(String(last.no_anggota).split('-')[1])+1:1;const no='KMB-'+String(num).padStart(4,'0');const x=db.prepare('INSERT INTO anggota(no_anggota,nama,nik,alamat,no_hp,email,pekerjaan,tanggal_gabung,status) VALUES(?,?,?,?,?,?,?,date(\'now\'),\'aktif\')').run(no,nama.trim(),nik||null,alamat||null,no_hp.trim(),email||null,pekerjaan||null);res.status(201).json(db.prepare('SELECT * FROM anggota WHERE id=?').get(x.lastInsertRowid))});
+app.put('/api/anggota/:id',auth,allow('admin','manajer'),(req,res)=>{const {nama,alamat,no_hp,status}=req.body||{};db.prepare('UPDATE anggota SET nama=COALESCE(?,nama),alamat=COALESCE(?,alamat),no_hp=COALESCE(?,no_hp),status=COALESCE(?,status) WHERE id=?').run(nama,alamat,no_hp,status,req.params.id);res.json({ok:true})});
+
+app.get('/api/simpanan',auth,(req,res)=>res.json(db.prepare('SELECT * FROM simpanan ORDER BY tanggal DESC,id DESC').all()));
+app.post('/api/simpanan',auth,allow('admin','manajer'),(req,res)=>{const {anggota_id,jenis,jumlah,tanggal,keterangan}=req.body||{};const n=asNum(jumlah);if(!anggota_id||!jenis||n===null||n<=0)return res.status(400).json({error:'Data simpanan tidak valid'});const x=db.prepare('INSERT INTO simpanan(anggota_id,jenis,jumlah,tanggal,keterangan,created_by) VALUES(?,?,?,?,?,?)').run(anggota_id,jenis,n,tanggal||new Date().toISOString().slice(0,10),keterangan||null,req.user.username);res.status(201).json({id:x.lastInsertRowid})});
+app.get('/api/pinjaman',auth,(req,res)=>res.json(db.prepare('SELECT * FROM pinjaman ORDER BY id DESC').all()));
+app.post('/api/pinjaman',auth,allow('admin','manajer','nasabah'),(req,res)=>{const {anggota_id,jumlah,tenor_bulan,bunga_persen,tujuan}=req.body||{};const n=asNum(jumlah),t=Number(tenor_bulan);if(!anggota_id||n===null||n<=0||!Number.isInteger(t)||t<1||t>120)return res.status(400).json({error:'Data pinjaman tidak valid'});const x=db.prepare('INSERT INTO pinjaman(anggota_id,jumlah,tenor_bulan,bunga_persen,tujuan) VALUES(?,?,?,?,?)').run(anggota_id,n,Number(bunga_persen)||1.5,tujuan||null);res.status(201).json({id:x.lastInsertRowid})});
+app.get('/api/transaksi',auth,(req,res)=>res.json(db.prepare('SELECT * FROM transaksi ORDER BY tanggal DESC,id DESC LIMIT 300').all()));
+app.post('/api/transaksi',auth,allow('admin','manajer'),(req,res)=>{const {anggota_id,jenis,jumlah,tanggal,keterangan}=req.body||{};const n=asNum(jumlah);if(!jenis||n===null||n<=0)return res.status(400).json({error:'Transaksi tidak valid'});const x=db.prepare('INSERT INTO transaksi(anggota_id,jenis,jumlah,tanggal,keterangan,created_by) VALUES(?,?,?,?,?,?)').run(anggota_id||null,jenis,n,tanggal||new Date().toISOString(),keterangan||null,req.user.username);res.status(201).json({id:x.lastInsertRowid})});
+app.get('/api/laporan/ringkasan',auth,(req,res)=>{const anggota=db.prepare("SELECT COUNT(*) c FROM anggota WHERE status='aktif'").get().c;const simpanan=db.prepare('SELECT COALESCE(SUM(jumlah),0) s FROM simpanan').get().s;const transaksi=db.prepare('SELECT COALESCE(SUM(jumlah),0) s FROM transaksi').get().s;const pinjaman=db.prepare("SELECT COALESCE(SUM(jumlah),0) s FROM pinjaman WHERE status IN ('pengajuan','disetujui')").get().s;const pendingA=db.prepare("SELECT COUNT(*) c FROM anggota WHERE status='pending'").get().c;const pendingP=db.prepare("SELECT COUNT(*) c FROM pinjaman WHERE status='pengajuan'").get().c;const hari=db.prepare("SELECT COUNT(*) c FROM transaksi WHERE date(tanggal)=date('now')").get().c;res.json({anggota_aktif:anggota,total_simpanan:simpanan,total_transaksi:transaksi,pinjaman_aktif:pinjaman,pendaftaran_pending:pendingA,pinjaman_pending:pendingP,transaksi_hari_ini:hari})});
+app.get('/api/users',auth,allow('admin','manajer'),(req,res)=>res.json(db.prepare('SELECT id,username,nama,role,anggota_id,aktif,created_at FROM users ORDER BY id').all()));
+app.post('/api/users',auth,allow('admin'),(req,res)=>{const {username,password,nama,role}=req.body||{};if(!username||!password||!nama||!['admin','manajer','pengawas'].includes(role))return res.status(400).json({error:'Data pengguna tidak valid'});const x=db.prepare('INSERT INTO users(username,password_hash,nama,role) VALUES(?,?,?,?)').run(username.trim(),bcrypt.hashSync(password,12),nama.trim(),role);res.status(201).json({id:x.lastInsertRowid})});
+
+app.use(express.static(path.join(__dirname,'public')));
+app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+app.listen(PORT,()=>console.log(`Koperasi Mitra Barokah aktif pada port ${PORT}`));
