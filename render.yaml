@@ -3,12 +3,24 @@ services:
     name: koperasi-mitra-barokah
     runtime: node
     plan: free
-    buildCommand: "curl -L --fail https://raw.githubusercontent.com/sahid040601/koperasi-mitra-barokah/main/app-release.tar.gz -o /tmp/kmb.tar.gz && rm -rf app && mkdir app && tar -xzf /tmp/kmb.tar.gz -C app && cd app && npm install"
-    startCommand: "cd app && npm start"
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
     envVars:
-      - key: JWT_SECRET
-        sync: false
-      - key: CORS_ORIGIN
-        value: https://koperasi-mitra-barokah.onrender.com
       - key: NODE_ENV
         value: production
+      - key: CORS_ORIGIN
+        value: https://koperasi-mitra-barokah.onrender.com
+      - key: JWT_SECRET
+        sync: false
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+      - key: INITIAL_MANAJER_PASSWORD
+        sync: false
+      - key: INITIAL_PENGAWAS_PASSWORD
+        sync: false
+      - key: INITIAL_NASABAH_PASSWORD
+        sync: false
+      - key: LOGIN_RATE_LIMIT_MAX
+        value: "10"
