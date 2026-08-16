@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: koperasi-mitra-barokah
+    runtime: node
+    plan: free
+    buildCommand: "curl -L --fail https://raw.githubusercontent.com/sahid040601/koperasi-mitra-barokah/main/app-release.tar.gz -o /tmp/kmb.tar.gz && rm -rf app && mkdir app && tar -xzf /tmp/kmb.tar.gz -C app && cd app && npm install"
+    startCommand: "cd app && npm start"
+    envVars:
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://koperasi-mitra-barokah.onrender.com
+      - key: NODE_ENV
+        value: production
