@@ -1,18 +1,18 @@
-// Vercel catch-all Serverless Function adapter for the Express application.
-// The application is designed to run locally with app.listen(); on Vercel we
-// suppress that listener and export the Express app as the request handler.
-const http = require('http');
-
-const originalListen = http.Server.prototype.listen;
-http.Server.prototype.listen = function () {
-  return this;
-};
+// Vercel adapter: load the existing Express app without opening a TCP port.
+const express = require('express');
 
 let app;
+const originalListen = express.application.listen;
+express.application.listen = function () {
+  app = this;
+  return { on() { return this; } };
+};
+
 try {
-  app = require('../server');
+  require('../server');
 } finally {
-  http.Server.prototype.listen = originalListen;
+  express.application.listen = originalListen;
 }
 
+if (!app) throw new Error('Express app gagal dimuat');
 module.exports = app;
