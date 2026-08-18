@@ -1,18 +1,6 @@
-// Vercel adapter: load the existing Express app without opening a TCP port.
-const express = require('express');
+const app = require('../server');
 
-let app;
-const originalListen = express.application.listen;
-express.application.listen = function () {
-  app = this;
-  return { on() { return this; } };
+module.exports = (req, res) => {
+  if (req.url && req.url.startsWith('/api')) req.url = req.url.slice(4) || '/';
+  return app(req, res);
 };
-
-try {
-  require('../server');
-} finally {
-  express.application.listen = originalListen;
-}
-
-if (!app) throw new Error('Express app gagal dimuat');
-module.exports = app;
