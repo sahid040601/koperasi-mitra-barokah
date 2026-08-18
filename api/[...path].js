@@ -1,6 +1,5 @@
 const app = require('../server');
 
-module.exports = (req, res) => {
-  if (req.url && req.url.startsWith('/api')) req.url = req.url.slice(4) || '/';
-  return app(req, res);
-};
+// Vercel catch-all function forwards the original /api/* path to Express.
+// Express defines its routes under /api, so do not strip the prefix here.
+module.exports = (req, res) => app(req, res);
