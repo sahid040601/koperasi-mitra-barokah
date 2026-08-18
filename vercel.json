@@ -1,5 +1,8 @@
 {
   "version": 2,
+  "rewrites": [
+    {"source":"/api/:path*","destination":"/api"}
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -16,6 +19,10 @@
     {
       "source": "/style.css",
       "headers": [{"key":"Cache-Control","value":"no-store"}]
+    },
+    {
+      "source": "/logo.svg",
+      "headers": [{"key":"Cache-Control","value":"public,max-age=3600"}]
     }
   ]
 }
